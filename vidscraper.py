@@ -8,14 +8,45 @@
 
 """
 
-import os, re, sys, urllib
+import os, re, sys, urllib, time
 import shlex, subprocess
 
+def convert_to_vids(slides):
+    # Convert it all
+    mp4s = []
+    pause = False
+    for slide in slides:
+        mp4 = os.path.abspath(os.path.join(outdir, '%04d.mp4' % slide[0]))
+        if os.path.exists(mp4):
+            mp4s.append(mp4)
+            continue
+        print '-------------------------------'
+        out = open(os.path.abspath(os.path.join(outdir, '%04d.out' % slide[0])), 'w')
+        err = open(os.path.abspath(os.path.join(outdir, '%04d.err' % slide[0])), 'w')
+        dur = (duration - slide[1])/1000.
+        if not slide[0]+1 >= len(slides):
+            # slides[slide[0]] is the next slide, 
+            # because slide #s start with 1, not 0
+            dur = (float(slides[slide[0]][1])-float(slide[1]))/1000. 
+        jpg = os.path.abspath(os.path.join(outdir, '%04d.jpg' % slide[0]))
+        cmd ='ffmpeg -loop_input -t %f -r 24000/1001 -i %s -threads 0 -vcodec libx264 -crf 22 -vpre veryfast %s' % (dur, jpg, mp4)
+        print cmd
+        try:
+            subprocess.check_call(shlex.split(cmd), stdout=out, stderr=err)
+        except subprocess.CalledProcessError as cpe:
+            print "Error in encoding slide %d, return code: %d" % (slide[0], cpe.returncode)
+        out.close()
+        err.close()
+        print '-------------------------------'
+        mp4s.append(mp4)
+        time.sleep(sleeptime)
+    return mp4s
+
 def usage():
-    print "usage: vidscraper.py [--fetch] url outdir"
+    print "usage: vidscraper.py [--fetch] url outdir sleeptime"
     sys.exit(1)
 
-if len(sys.argv) < 3:
+if len(sys.argv) < 4:
     usage()
 
 fetch = False
@@ -25,6 +56,8 @@ if sys.argv[1] == '--fetch':
 
 url = sys.argv[1]
 outdir = sys.argv[2]
+sleeptime = int(sys.argv[3])
+startmp4 = int(sys.argv[4])
 
 # fetch url
 page = urllib.urlopen(url)
@@ -78,51 +111,21 @@ if fetch:
         timings.write('%04d, %09d\n' % slide)
     timings.close()
 
-# Convert it all
-mp4s = []
-for slide in slides:
-    out = open(os.path.abspath(os.path.join(outdir, '%04d.out' % slide[0])), 'w')
-    err = open(os.path.abspath(os.path.join(outdir, '%04d.err' % slide[0])), 'w')
-    dur = (duration - slide[1])/1000.
-    if not slide[0]+1 >= len(slides):
-        dur = (float(slides[slide[0]+1][1])-float(slide[1]))/1000.
-    jpg = os.path.abspath(os.path.join(outdir, '%04d.jpg' % slide[0]))
-    mp4 = os.path.abspath(os.path.join(outdir, '%04d.mp4' % slide[0]))
-    if os.path.exists(mp4):
-        os.remove(mp4)
-    cmd ='time -v ffmpeg -loop_input -t %f -i %s -r 24000/1001 -vcodec libx264 -crf 22 -vpre veryfast %s' % (dur, jpg, mp4)
-    print cmd
-    try:
-        subprocess.check_call(shlex.split(cmd), stdout=out, stderr=err)
-    except subprocess.CalledProcessError as cpe:
-        print "Error in encoding slide %d, return code: %d" % (slide[0], cpe.returncode)
-    else:
-        out.close()
-        err.close()
-        mp4s.append(mp4)
-
+mp4s = convert_to_vids(slides)
 
 # Concatenate it all
-intermediate = os.path.abspath(os.path.join(outdir, 'video.mp4'))
-if os.path.exists(intermediate):
-    os.remove(intermediate)
-chunksize = 19
-for i, chunk in enumerate(mp4s[x:x+chunksize] for x in range(0, len(mp4s), chunksize)):
+outmp4 = os.path.abspath(os.path.join(outdir, 'video.mp4'))
+for i, mp4 in enumerate(mp4s):
+    if i < startmp4: continue
     out = open(os.path.abspath(os.path.join(outdir, 'mp4-%04d.out' % i)), 'w')
     err = open(os.path.abspath(os.path.join(outdir, 'mp4-%04d.err' % i)), 'w')
-    cmd = ['time', '-v', 'MP4Box']
-    if os.path.exists(intermediate):
-        cmd.extend(['-cat', intermediate])
-    for f in chunk:
-        cmd.extend(['-cat', f])
-    cmd.append(intermediate)
+    cmd = ['MP4Box']
+    cmd.extend(['-cat', mp4])
+    cmd.append(outmp4)
     print cmd
-    try:
-        subprocess.call_check(cmd, stdout=out, stderr=err)
-    except subprocess.CalledProcessError as cpe:
-        print "Error in encoding slide %d, return code: %d" % (slide[0], cpe.returncode)
-    else:
-        out.close()
-        err.close()
+    subprocess.check_call(cmd, stdout=out, stderr=err)
+    out.close()
+    err.close()
+    time.sleep(sleeptime/2)
 
     
